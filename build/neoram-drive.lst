@@ -1,0 +1,1356 @@
+Sections:
+00: "org0001:801" (801-FA6)
+
+
+Source: "src/neoram-drive.asm"
+                        	     1: ; Copyright 2007,2008 Martin Wendt / enthusi(ONS)
+                        	     2: ;
+                        	     3: ; This program is free software: you can redistribute it and/or modify
+                        	     4: ; it under the terms of the GNU General Public License as published by
+                        	     5: ; the Free Software Foundation, either version 3 of the License, or
+                        	     6: ; (at your option) any later version.
+                        	     7: ;
+                        	     8: ; This program is distributed in the hope that it will be useful,
+                        	     9: ; but WITHOUT ANY WARRANTY; without even the implied warranty of
+                        	    10: ; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+                        	    11: ; GNU General Public License for more details.
+                        	    12: ;
+                        	    13: ; You should have received a copy of the GNU General Public License
+                        	    14: ; along with this program. If not, see <http://www.gnu.org/licenses/>.
+                        	    15: 
+                        	    16:         ;; ZP variables
+                        	    17: bankl:          .ezp $fb
+                        	    18: bankm:          .ezp $fc
+                        	    19: bankh:          .ezp $fd
+                        	    20: temp:           .ezp $fe
+                        	    21: temp1:          .ezp $a7
+                        	    22: temp2:          .ezp $a8
+                        	    23: temp3:          .ezp $a9
+                        	    24: temp_c3:        .ezp $aa 
+                        	    25: temp_cmp:       .ezp $ab
+                        	    26: 
+                        	    27:         ;; Start of code
+                        	    28:         .org $0801
+                        	    29: 
+                        	    30:         ;; BASIC loader
+00:0801 0B08            	    31:         .word basend
+00:0803 0000            	    32:         .word 0
+00:0805 9E              	    33:         .byte $9e
+00:0806 32303631        	    34:         .string "2061"
+00:080A 00
+00:080B 0000            	    35: basend: .word 0
+                        	    36:         
+00:080D A200            	    37:         ldx #$00                ;in case you load
+00:080F 8EFFDF          	    38:         stx $dfff               ;after heavy use of c64 :)
+00:0812 8EFEDF          	    39: bas_0:  stx $dffe
+00:0815 ADAF08          	    40: bas_1:  lda launch_code
+00:0818 9D00DE          	    41:         sta $de00,x             ;store small launcher at de00...
+00:081B EE1608          	    42:         inc bas_1+1
+00:081E D003            	    43:         bne bas_2
+00:0820 EE1708          	    44:         inc bas_1+2
+00:0823 E8              	    45: bas_2:  inx
+00:0824 D0EF            	    46:         bne bas_1
+00:0826 A901            	    47: bas_3:  lda #01
+00:0828 8DFEDF          	    48:         sta $dffe               ;dfff still at 0
+00:082B ADAF09          	    49: bas_4:  lda start_of_data
+00:082E 9D00DE          	    50:         sta $de00,x
+00:0831 EE2C08          	    51:         inc bas_4+1
+00:0834 D003            	    52:         bne bas_5
+00:0836 EE2D08          	    53:         inc bas_4+2
+00:0839 E8              	    54: bas_5:  inx
+00:083A D0EF            	    55:         bne bas_4
+00:083C EE2708          	    56:         inc bas_3+1
+00:083F AD2708          	    57:         lda bas_3+1
+00:0842 C907            	    58:         cmp #$07                ;transfer 7 pages.
+                        	    59:                                 ;7 is good since only now it wont overwrite future
+                        	    60:                                 ;data content at reboot of basic-init-code! 
+00:0844 F003            	    61:         beq bas_end
+00:0846 4C2608          	    62:         jmp bas_3
+                        	    63: bas_end:
+00:0849 A200            	    64:         ldx #$00                ;set back to bank 0
+                        	    65:                                 ;so neoramdrive can start right away!
+00:084B 8EFFDF          	    66:         stx $dfff
+00:084E 8EFEDF          	    67:         stx $dffe
+00:0851 A2FF            	    68:         ldx #$ff
+                        	    69: bas_end1:
+00:0853 E8              	    70:         inx
+00:0854 BD5F08          	    71:         lda ini_txt,x
+00:0857 F005            	    72:         beq bas_end2
+00:0859 20D2FF          	    73:         jsr $ffd2
+00:085C D0F5            	    74:         bne bas_end1
+                        	    75: bas_end2:
+00:085E 60              	    76:         rts
+                        	    77: ini_txt:
+00:085F 0D              	    78:         .byte $0d
+00:0860 202A204E454F5241	    79:         .text " * NEORAM-DRIVE NOW LOADED TO NEORAM *"
+00:0868 4D2D445249564520
+00:0870 4E4F57204C4F4144
+00:0878 454420544F204E45
+00:0880 4F52414D202A
+00:0886 0D              	    80:         .byte $0d
+00:0887 202A204C41554E43	    81:         .text " * LAUNCH WITH SYS 57E3.     /N2C[O] *"
+00:088F 4820574954482053
+00:0897 595320353745332E
+00:089F 20202020202F4E32
+00:08A7 435B4F5D202A
+00:08AD 0D              	    82:         .byte $0d, $00
+00:08AE 00
+                        	    83: 
+                        	    84:         ;;--------------------------------------
+                        	    85: launch_code:
+                        	    86:         ;; This code is the small kicker at de00 that copies the
+                        	    87:         ;; launcher to $c900 and starts it there
+                        	    88:         .rorg $de00
+                        	    89: start_of_launcher:
+00:DE00 A219            	    90:  ldx #(end_of_first_launcher-start_of_launcher)
+                        	    91:         ;; Only copy required no of bytes
+00:DE02 BD00DE          	    92: sol_1:  lda $de00,x             ;adjust x to actual extern code-start
+00:DE05 8D00C9          	    93: sol_2:  sta $c900
+00:DE08 E8              	    94:         inx
+00:DE09 F006            	    95:         beq sol_end
+00:DE0B EE06DE          	    96:         inc sol_2+1
+00:DE0E 4C02DE          	    97:         jmp sol_1
+                        	    98: sol_end:        
+00:DE11 A900            	    99:         lda #$00
+00:DE13 8D06DE          	   100:         sta sol_2+1
+00:DE16 4C00C9          	   101:         jmp $c900
+                        	   102: end_of_first_launcher:  
+                        	   103:         .rend
+                        	   104:         
+                        	   105: launch_code_over:
+                        	   106:         .rorg $c900
+                        	   107:         ;;----------------------------------
+                        	   108:         ;; Now comes the actual launcher that will act 
+                        	   109:         ;; from $c900 and must be small enough to for 1st page.
+                        	   110:         ;; I think the drive-code shall start on 2nd page cleanly *g*
+                        	   111: second_launch:  
+00:C900 A200            	   112:         ldx #$00
+00:C902 A901            	   113: init_0: lda #$01
+00:C904 8DFEDF          	   114:         sta $dffe
+00:C907 BD00DE          	   115: init_1: lda $de00,x
+00:C90A 8D00CA          	   116: init_2: sta $ca00
+00:C90D E8              	   117:         inx
+00:C90E D003            	   118:         bne init_3
+                        	   119:         ;; First page fully read of neoram, go to 2nd page
+00:C910 EE03C9          	   120:         inc init_0+1
+00:C913 EE0BC9          	   121: init_3: inc init_2+1
+00:C916 D003            	   122:         bne init_4
+00:C918 EE0CC9          	   123:         inc init_2+2
+00:C91B AD0CC9          	   124: init_4: lda init_2+2
+00:C91E C9D0            	   125:         cmp #$d0                ;written till $cfff?
+00:C920 D0E0            	   126:         bne init_0
+00:C922 4C00CA          	   127:         jmp $ca00               ;launch drive code (finally)
+                        	   128:         .rend
+                        	   129: 
+00:08ED 14              	   130:         .byte $14,$08,$09,$13,$20,$09,$13,$20
+00:08EE 08
+00:08EF 09
+00:08F0 13
+00:08F1 20
+00:08F2 09
+00:08F3 13
+00:08F4 20
+00:08F5 14              	   131:         .byte $14,$08,$05,$20,$0c,$01,$15,$0e
+00:08F6 08
+00:08F7 05
+00:08F8 20
+00:08F9 0C
+00:08FA 01
+00:08FB 15
+00:08FC 0E
+00:08FD 03              	   132:         .byte $03,$08,$05,$12,$03,$0f,$04,$05
+00:08FE 08
+00:08FF 05
+00:0900 12
+00:0901 03
+00:0902 0F
+00:0903 04
+00:0904 05
+00:0905 2E              	   133:         .byte $2e,$10,$12,$05,$13,$05,$0e,$14
+00:0906 10
+00:0907 12
+00:0908 05
+00:0909 13
+00:090A 05
+00:090B 0E
+00:090C 14
+00:090D 05              	   134:         .byte $05,$04,$20,$14,$0f,$20,$19,$0f
+00:090E 04
+00:090F 20
+00:0910 14
+00:0911 0F
+00:0912 20
+00:0913 19
+00:0914 0F
+00:0915 15              	   135:         .byte $15,$20,$02,$19,$20,$05,$0e,$14
+00:0916 20
+00:0917 02
+00:0918 19
+00:0919 20
+00:091A 05
+00:091B 0E
+00:091C 14
+00:091D 08              	   136:         .byte $08,$15,$13,$09,$20,$0f,$06,$20
+00:091E 15
+00:091F 13
+00:0920 09
+00:0921 20
+00:0922 0F
+00:0923 06
+00:0924 20
+00:0925 0F              	   137:         .byte $0f,$0e,$13,$0c,$01,$15,$07,$08
+00:0926 0E
+00:0927 13
+00:0928 0C
+00:0929 01
+00:092A 15
+00:092B 07
+00:092C 08
+00:092D 14              	   138:         .byte $14,$2e,$10,$0c,$05,$01,$13,$05
+00:092E 2E
+00:092F 10
+00:0930 0C
+00:0931 05
+00:0932 01
+00:0933 13
+00:0934 05
+00:0935 20              	   139:         .byte $20,$12,$05,$10,$0f,$12,$14,$20
+00:0936 12
+00:0937 05
+00:0938 10
+00:0939 0F
+00:093A 12
+00:093B 14
+00:093C 20
+00:093D 02              	   140:         .byte $02,$15,$07,$13,$20,$01,$0e,$04
+00:093E 15
+00:093F 07
+00:0940 13
+00:0941 20
+00:0942 01
+00:0943 0E
+00:0944 04
+00:0945 20              	   141:         .byte $20,$06,$05,$01,$14,$15,$12,$05
+00:0946 06
+00:0947 05
+00:0948 01
+00:0949 14
+00:094A 15
+00:094B 12
+00:094C 05
+00:094D 20              	   142:         .byte $20,$12,$05,$11,$15,$05,$13,$14
+00:094E 12
+00:094F 05
+00:0950 11
+00:0951 15
+00:0952 05
+00:0953 13
+00:0954 14
+00:0955 13              	   143:         .byte $13,$2e
+00:0956 2E
+                        	   144: sys_starter:    
+                        	   145: jumptable:
+00:0957 4C              	   146:         .byte $4c,$00,$de
+00:0958 00
+00:0959 DE
+00:095A 14              	   147:         .byte $14,$08,$01,$0e,$0b,$13,$20,$14
+00:095B 08
+00:095C 01
+00:095D 0E
+00:095E 0B
+00:095F 13
+00:0960 20
+00:0961 14
+00:0962 0F              	   148:         .byte $0f,$20,$18,$31,$35,$34,$31,$20
+00:0963 20
+00:0964 18
+00:0965 31
+00:0966 35
+00:0967 34
+00:0968 31
+00:0969 20
+00:096A 06              	   149:         .byte $06,$0f,$12,$20,$14,$08,$05,$20
+00:096B 0F
+00:096C 12
+00:096D 20
+00:096E 14
+00:096F 08
+00:0970 05
+00:0971 20
+00:0972 04              	   150:         .byte $04,$05,$13,$09,$07,$0e,$20,$0f
+00:0973 05
+00:0974 13
+00:0975 09
+00:0976 07
+00:0977 0E
+00:0978 20
+00:0979 0F
+00:097A 06              	   151:         .byte $06,$20,$14,$08,$05,$20,$0e,$05
+00:097B 20
+00:097C 14
+00:097D 08
+00:097E 05
+00:097F 20
+00:0980 0E
+00:0981 05
+00:0982 0F              	   152:         .byte $0f,$12,$01,$0d,$21,$03,$0f,$0e
+00:0983 12
+00:0984 01
+00:0985 0D
+00:0986 21
+00:0987 03
+00:0988 0F
+00:0989 0E
+00:098A 14              	   153:         .byte $14,$01,$03,$14,$20,$0d,$05,$20
+00:098B 01
+00:098C 03
+00:098D 14
+00:098E 20
+00:098F 0D
+00:0990 05
+00:0991 20
+00:0992 16              	   154:         .byte $16,$09,$01,$20,$0d,$01,$09,$0c
+00:0993 09
+00:0994 01
+00:0995 20
+00:0996 0D
+00:0997 01
+00:0998 09
+00:0999 0C
+00:099A 20              	   155:         .byte $20,$03,$36,$34,$00,$05,$0e,$14
+00:099B 03
+00:099C 36
+00:099D 34
+00:099E 00
+00:099F 05
+00:09A0 0E
+00:09A1 14
+00:09A2 08              	   156:         .byte $08,$15,$13,$09,$2e,$04,$05,$20
+00:09A3 15
+00:09A4 13
+00:09A5 09
+00:09A6 2E
+00:09A7 04
+00:09A8 05
+00:09A9 20
+00:09AA 2F              	   157:         .byte $2f,$32,$30,$30,$38
+00:09AB 32
+00:09AC 30
+00:09AD 30
+00:09AE 38
+                        	   158:         
+                        	   159: ;;-----------------------------------------
+                        	   160: ;; Here starts the true drive-code but
+                        	   161: ;; beware it starts at 0,8,0 (l,m,h) address 
+                        	   162: ;; check for labels: startpage0..3
+                        	   163: ;; also ramsize
+                        	   164: start_of_data:
+                        	   165:         .rorg $ca00
+                        	   166: start_of_code:  
+00:CA00 A902            	   167:         lda #$02                ;drive no
+00:CA02 8502            	   168:         sta $02
+00:CA04 AD3003          	   169:         lda $0330 
+00:CA07 8D70CA          	   170:         sta load 
+00:CA0A AD3103          	   171:         lda $0331 
+00:CA0D 8D71CA          	   172:         sta load+1 
+00:CA10 A987            	   173:         lda #<load_prg
+00:CA12 8D3003          	   174:         sta $0330 
+00:CA15 A9CB            	   175:         lda #>load_prg 
+00:CA17 8D3103          	   176:         sta $0331 
+00:CA1A AD3203          	   177:         lda $0332 
+00:CA1D 8D6ECA          	   178:         sta save 
+00:CA20 AD3303          	   179:         lda $0333 
+00:CA23 8D6FCA          	   180:         sta save+1 
+00:CA26 A972            	   181:         lda #<save_prg
+00:CA28 8D3203          	   182:         sta $0332 
+00:CA2B A9CA            	   183:         lda #>save_prg
+00:CA2D 8D3303          	   184:         sta $0333 
+00:CA30 A900            	   185:         lda #$00
+00:CA32 8D20D0          	   186:         sta $d020 
+00:CA35 A200            	   187:         ldx #$00 
+00:CA37 BD43CA          	   188: print:  lda text2,x 
+00:CA3A 20D2FF          	   189:         jsr $ffd2 
+00:CA3D F003            	   190:         beq print_end 
+00:CA3F E8              	   191:         inx 
+00:CA40 D0F5            	   192:         bne print 
+                        	   193: print_end:
+00:CA42 60              	   194:         rts 
+00:CA43 93              	   195: text2:  .byte $93, $0d
+00:CA44 0D
+00:CA45 202A2A204E454F52	   196:         .text " ** NEORAM-DRIVE N2C/ONSLAUGHT V0.40 **"
+00:CA4D 414D2D4452495645
+00:CA55 204E32432F4F4E53
+00:CA5D 4C41554748542056
+00:CA65 302E3430202A2A
+00:CA6C 0D              	   197:         .byte $0d, $00
+00:CA6D 00
+00:CA6E EA              	   198: save:   .byte $ea
+00:CA6F F5              	   199:         .byte $f5
+00:CA70 A2              	   200: load:   .byte $a2
+00:CA71 F4              	   201:         .byte $f4
+                        	   202: save_prg:       
+00:CA72 A4BA            	   203:         ldy $ba
+00:CA74 C402            	   204:         cpy $02
+00:CA76 F003            	   205:         beq ramsave
+00:CA78 6C6ECA          	   206:         jmp (save)
+                        	   207: ramsave:
+00:CA7B 78              	   208:         sei 
+00:CA7C 20C6CF          	   209:         jsr set_bank_ram
+00:CA7F 2033CB          	   210:         jsr seek_end 
+00:CA82 2021CB          	   211:         jsr next_byte 
+00:CA85 2021CB          	   212:         jsr next_byte 
+00:CA88 2021CB          	   213:         jsr next_byte 
+00:CA8B A000            	   214:         ldy #$00 
+00:CA8D 8C0C03          	   215: name:   sty $030c 
+00:CA90 AC0C03          	   216:         ldy $030c 
+00:CA93 B1BB            	   217:         lda ($bb),y 
+00:CA95 A000            	   218:         ldy #$00 
+00:CA97 209BCF          	   219:         jsr save_byte 
+00:CA9A 2021CB          	   220:         jsr next_byte 
+00:CA9D AC0C03          	   221:         ldy $030c 
+00:CAA0 C8              	   222:         iny 
+00:CAA1 C4B7            	   223:         cpy $b7 
+00:CAA3 F003            	   224:         beq endname 
+00:CAA5 4C8DCA          	   225:         jmp name 
+                        	   226: endname:
+00:CAA8 A900            	   227:         lda #$00 
+00:CAAA A000            	   228:         ldy #$00 
+00:CAAC 209BCF          	   229:         jsr save_byte 
+00:CAAF 2021CB          	   230:         jsr next_byte 
+00:CAB2 A5C1            	   231:         lda $c1 
+00:CAB4 209BCF          	   232:         jsr save_byte 
+00:CAB7 2021CB          	   233:         jsr next_byte 
+00:CABA A5C2            	   234:         lda $c2 
+00:CABC 209BCF          	   235:         jsr save_byte 
+00:CABF 2021CB          	   236:         jsr next_byte 
+                        	   237: saveloop:
+00:CAC2 A5C2            	   238:         lda $c2 
+00:CAC4 C5AF            	   239:         cmp $af 
+00:CAC6 D006            	   240:         bne noend 
+00:CAC8 A5C1            	   241:         lda $c1 
+00:CACA C5AE            	   242:         cmp $ae 
+00:CACC F00E            	   243:         beq endsave 
+00:CACE B1C1            	   244: noend:  lda ($c1),y 
+00:CAD0 209BCF          	   245:         jsr save_byte 
+00:CAD3 2021CB          	   246:         jsr next_byte 
+00:CAD6 202CCB          	   247:         jsr next_byte2 
+00:CAD9 4CC2CA          	   248:         jmp saveloop 
+                        	   249: endsave:
+00:CADC A900            	   250:         lda #$00 
+00:CADE 209BCF          	   251:         jsr save_byte 
+00:CAE1 A5FB            	   252:         lda bankl 
+00:CAE3 8D0C03          	   253:         sta $030c 
+00:CAE6 A5FC            	   254:         lda bankm
+00:CAE8 8D0D03          	   255:         sta $030d 
+00:CAEB A5FD            	   256:         lda bankh
+00:CAED 8D0E03          	   257:         sta $030e
+00:CAF0 2021CB          	   258:         jsr next_byte 
+00:CAF3 A900            	   259:         lda #$00 
+00:CAF5 209BCF          	   260:         jsr save_byte 
+00:CAF8 2021CB          	   261:         jsr next_byte 
+00:CAFB A900            	   262:         lda #$00 
+00:CAFD 209BCF          	   263:         jsr save_byte 
+00:CB00 2033CB          	   264:         jsr seek_end 
+00:CB03 AD0C03          	   265:         lda $030c 
+00:CB06 209BCF          	   266:         jsr save_byte 
+00:CB09 2021CB          	   267:         jsr next_byte 
+00:CB0C AD0D03          	   268:         lda $030d 
+00:CB0F 209BCF          	   269:         jsr save_byte 
+00:CB12 2021CB          	   270:         jsr next_byte 
+00:CB15 AD0E03          	   271:         lda $030e 
+00:CB18 209BCF          	   272:         jsr save_byte 
+00:CB1B 18              	   273:         clc 
+00:CB1C 20CDCF          	   274:         jsr set_bank_rom
+00:CB1F 58              	   275:         cli 
+00:CB20 60              	   276:         rts    
+                        	   277: next_byte:
+00:CB21 E6FB            	   278:         inc bankl
+00:CB23 D006            	   279:         bne set_end
+00:CB25 E6FC            	   280:         inc bankm
+00:CB27 D002            	   281:         bne set_end
+00:CB29 E6FD            	   282:         inc bankh
+                        	   283: set_end:
+00:CB2B 60              	   284:         rts
+                        	   285: next_byte2:
+00:CB2C E6C1            	   286:         inc $c1 
+00:CB2E D002            	   287:         bne nopage 
+00:CB30 E6C2            	   288:         inc $c2 
+00:CB32 60              	   289: nopage: rts 
+                        	   290: seek_end:
+                        	   291: startpage0:
+00:CB33 A907            	   292:         lda #$07 
+00:CB35 85FC            	   293:         sta bankm
+00:CB37 A900            	   294:         lda #$00
+00:CB39 85FB            	   295:         sta bankl
+00:CB3B 85FD            	   296:         sta bankh
+                        	   297: findloop:
+00:CB3D A000            	   298:         ldy #$00 
+00:CB3F 2081CF          	   299:         jsr get_byte 
+00:CB42 85A7            	   300:         sta temp1
+00:CB44 2021CB          	   301:         jsr next_byte 
+00:CB47 2081CF          	   302:         jsr get_byte 
+00:CB4A 85A8            	   303:         sta temp2
+00:CB4C 2021CB          	   304:         jsr next_byte 
+00:CB4F 2081CF          	   305:         jsr get_byte 
+00:CB52 85A9            	   306:         sta temp3
+00:CB54 A5A7            	   307:         lda temp1
+00:CB56 D00B            	   308:         bne not_0
+00:CB58 A5A8            	   309:         lda temp2
+00:CB5A D007            	   310:         bne not_0
+00:CB5C A5A9            	   311:         lda temp3
+00:CB5E D003            	   312:         bne not_0
+00:CB60 4C72CB          	   313:         jmp endfound
+00:CB63 A6A7            	   314: not_0:   ldx temp1
+00:CB65 86FB            	   315:         stx bankl
+00:CB67 A6A8            	   316:         ldx temp2
+00:CB69 86FC            	   317:         stx bankm
+00:CB6B A6A9            	   318:         ldx temp3
+00:CB6D 86FD            	   319:         stx bankh
+00:CB6F 4C3DCB          	   320:         jmp findloop 
+                        	   321: endfound:
+00:CB72 A5FB            	   322:         lda bankl
+00:CB74 38              	   323:         sec
+00:CB75 E902            	   324:         sbc #$02
+00:CB77 85FB            	   325:         sta bankl
+00:CB79 A5FC            	   326:         lda bankm
+00:CB7B E900            	   327:         sbc #$00 
+00:CB7D 85FC            	   328:         sta bankm
+00:CB7F A5FD            	   329:         lda bankh
+00:CB81 E900            	   330:         sbc #$00 
+00:CB83 85FD            	   331:         sta bankh
+00:CB85 18              	   332:         clc 
+00:CB86 60              	   333:         rts 
+                        	   334: load_prg:
+00:CB87 48              	   335:         pha 
+00:CB88 A5BA            	   336:         lda $ba 
+00:CB8A C502            	   337:         cmp $02 
+00:CB8C F004            	   338:         beq okload 
+00:CB8E 68              	   339:         pla 
+00:CB8F 6C70CA          	   340:         jmp (load) 
+00:CB92 68              	   341: okload: pla 
+00:CB93 8593            	   342:         sta $93 
+00:CB95 A000            	   343:         ldy #$00 
+00:CB97 B1BB            	   344:         lda ($bb),y 
+00:CB99 C95F            	   345:         cmp #$5f                 ;"<-"
+00:CB9B D003            	   346:         bne spr0
+00:CB9D 4C4ACF          	   347:         jmp format
+00:CBA0 C95C            	   348: spr0:   cmp #$5c                 ;"pound"
+00:CBA2 D003            	   349:         bne spr1 
+00:CBA4 4CF1CD          	   350:         jmp scratch 
+00:CBA7 C924            	   351: spr1:   cmp #$24                 ;"$"
+00:CBA9 D003            	   352:         bne spr2 
+00:CBAB 4CCACC          	   353:         jmp directory 
+00:CBAE 78              	   354: spr2:   sei 
+00:CBAF 20C6CF          	   355:         jsr set_bank_ram
+00:CBB2 201CCC          	   356:         jsr search 
+00:CBB5 A5B9            	   357:         lda $b9 
+00:CBB7 D011            	   358:         bne absload 
+00:CBB9 A5C3            	   359:         lda $c3 
+00:CBBB 85C1            	   360:         sta $c1 
+00:CBBD A5C4            	   361:         lda $c4 
+00:CBBF 85C2            	   362:         sta $c2 
+00:CBC1 2021CB          	   363:         jsr next_byte 
+00:CBC4 2021CB          	   364:         jsr next_byte 
+00:CBC7 4CDACB          	   365:         jmp loadloop 
+                        	   366: absload:
+00:CBCA 2081CF          	   367:         jsr get_byte 
+00:CBCD 85C1            	   368:         sta $c1 
+00:CBCF 2021CB          	   369:         jsr next_byte 
+00:CBD2 2081CF          	   370:         jsr get_byte 
+00:CBD5 85C2            	   371:         sta $c2 
+00:CBD7 2021CB          	   372:         jsr next_byte 
+                        	   373: loadloop:
+00:CBDA A5FD            	   374:         lda bankh
+00:CBDC C5B0            	   375:         cmp $b0
+00:CBDE D00C            	   376:         bne load1
+00:CBE0 A5FC            	   377:         lda bankm
+00:CBE2 C5AF            	   378:         cmp $af
+00:CBE4 D006            	   379:         bne load1 
+00:CBE6 A5FB            	   380:         lda bankl
+00:CBE8 C5AE            	   381:         cmp $ae 
+00:CBEA F022            	   382:         beq endload 
+00:CBEC A593            	   383: load1:  lda $93 
+00:CBEE D00E            	   384:         bne verify 
+00:CBF0 2081CF          	   385:         jsr get_byte 
+00:CBF3 91C1            	   386:         sta ($c1),y 
+                        	   387: verifyed:
+00:CBF5 2021CB          	   388:         jsr next_byte 
+00:CBF8 202CCB          	   389:         jsr next_byte2 
+00:CBFB 4CDACB          	   390:         jmp loadloop 
+00:CBFE 2081CF          	   391: verify: jsr get_byte 
+00:CC01 D1C1            	   392:         cmp ($c1),y 
+00:CC03 F0F0            	   393:         beq verifyed 
+00:CC05 20CDCF          	   394:         jsr set_bank_rom
+00:CC08 58              	   395:         cli 
+00:CC09 A91C            	   396:         lda #$1c 
+00:CC0B 4C15F7          	   397:         jmp $f715 
+                        	   398: endload:
+00:CC0E A6C1            	   399:         ldx $c1 
+00:CC10 A4C2            	   400:         ldy $c2 
+00:CC12 20CDCF          	   401:         jsr set_bank_rom
+00:CC15 58              	   402:         cli 
+00:CC16 A940            	   403:         lda #$40 
+00:CC18 8590            	   404:         sta $90 
+00:CC1A 18              	   405:         clc 
+00:CC1B 60              	   406:         rts 
+                        	   407: search: 
+                        	   408: startpage1:
+00:CC1C A907            	   409:         lda #$07
+00:CC1E 85FC            	   410:         sta bankm
+00:CC20 A900            	   411:         lda #$00
+00:CC22 85FB            	   412:         sta bankl
+00:CC24 85FD            	   413:         sta bankh
+                        	   414: nameloop1:
+00:CC26 A000            	   415:         ldy #$00 
+00:CC28 8C0C03          	   416:         sty $030c 
+00:CC2B A5FB            	   417:         lda bankl
+00:CC2D 85C1            	   418:         sta $c1
+00:CC2F A5FC            	   419:         lda bankm
+00:CC31 85C2            	   420:         sta $c2
+00:CC33 A5FD            	   421:         lda bankh
+00:CC35 85AA            	   422:         sta temp_c3
+00:CC37 2081CF          	   423:         jsr get_byte 
+00:CC3A 85A7            	   424:         sta temp1
+00:CC3C 2021CB          	   425:         jsr next_byte 
+00:CC3F 2081CF          	   426:         jsr get_byte 
+00:CC42 85A8            	   427:         sta temp2
+00:CC44 2021CB          	   428:         jsr next_byte 
+00:CC47 2081CF          	   429:         jsr get_byte 
+00:CC4A 85A9            	   430:         sta temp3
+00:CC4C A5A7            	   431:         lda temp1
+00:CC4E D00B            	   432:         bne not_0_2
+00:CC50 A5A8            	   433:         lda temp2
+00:CC52 D007            	   434:         bne not_0_2
+00:CC54 A5A9            	   435:         lda temp3
+00:CC56 D003            	   436:         bne not_0_2
+00:CC58 4CA5CC          	   437:         jmp notfound
+                        	   438: not_0_2:
+00:CC5B A5A7            	   439:         lda temp1
+00:CC5D 85AE            	   440:         sta $ae
+00:CC5F A5A8            	   441:         lda temp2
+00:CC61 85AF            	   442:         sta $af
+00:CC63 A5A9            	   443:         lda temp3
+00:CC65 85B0            	   444:         sta $b0
+00:CC67 2021CB          	   445:         jsr next_byte 
+                        	   446: nameloop:
+00:CC6A AC0C03          	   447:         ldy $030c 
+00:CC6D B1BB            	   448:         lda ($bb),y 
+00:CC6F C92A            	   449:         cmp #$2a 
+00:CC71 F04A            	   450:         beq ast 
+00:CC73 C93F            	   451:         cmp #$3f 
+00:CC75 F00F            	   452:         beq joker 
+00:CC77 A000            	   453:         ldy #$00 
+00:CC79 48              	   454:         pha 
+00:CC7A 2081CF          	   455:         jsr get_byte 
+00:CC7D F018            	   456:         beq found 
+00:CC7F 85AB            	   457:         sta temp_cmp
+00:CC81 68              	   458:         pla 
+00:CC82 C5AB            	   459:         cmp temp_cmp
+00:CC84 D028            	   460:         bne next 
+00:CC86 AC0C03          	   461: joker:  ldy $030c 
+00:CC89 C4B7            	   462:         cpy $b7 
+00:CC8B F021            	   463:         beq next 
+00:CC8D C8              	   464:         iny 
+00:CC8E 8C0C03          	   465:         sty $030c 
+00:CC91 2021CB          	   466:         jsr next_byte 
+00:CC94 4C6ACC          	   467:         jmp nameloop 
+00:CC97 68              	   468: found:  pla 
+00:CC98 AC0C03          	   469:         ldy $030c 
+00:CC9B C4B7            	   470:         cpy $b7 
+00:CC9D D00F            	   471:         bne next 
+                        	   472: foundnull:      
+00:CC9F 2021CB          	   473:         jsr next_byte 
+00:CCA2 A000            	   474:         ldy #$00 
+00:CCA4 60              	   475:         rts 
+                        	   476: notfound:
+00:CCA5 68              	   477:         pla 
+00:CCA6 68              	   478:         pla 
+00:CCA7 20CDCF          	   479:         jsr set_bank_rom
+00:CCAA 58              	   480:         cli 
+00:CCAB 4C04F7          	   481:         jmp $f704                ;error-msg
+00:CCAE A5AE            	   482: next:   lda $ae
+00:CCB0 85FB            	   483:         sta bankl
+00:CCB2 A5AF            	   484:         lda $af
+00:CCB4 85FC            	   485:         sta bankm
+00:CCB6 A5B0            	   486:         lda $b0
+00:CCB8 85FD            	   487:         sta bankh
+00:CCBA 4C26CC          	   488:         jmp nameloop1 
+00:CCBD A000            	   489: ast:    ldy #$00 
+00:CCBF 2021CB          	   490: seek_0: jsr next_byte 
+00:CCC2 2081CF          	   491:         jsr get_byte 
+00:CCC5 D0F8            	   492:         bne seek_0 
+00:CCC7 4C9FCC          	   493:         jmp foundnull 
+                        	   494: directory:
+00:CCCA 78              	   495:         sei 
+00:CCCB A2FF            	   496:         ldx #$ff
+00:CCCD E8              	   497: cat2:   inx 
+00:CCCE BDBCCD          	   498:         lda text0,x
+00:CCD1 20D2FF          	   499:         jsr $ffd2
+00:CCD4 D0F7            	   500:         bne cat2
+00:CCD6 20C6CF          	   501:         jsr set_bank_ram
+                        	   502: startpage2:
+00:CCD9 A907            	   503:         lda #$07
+00:CCDB 85AF            	   504:         sta $af
+00:CCDD 85FC            	   505:         sta bankm
+00:CCDF A900            	   506:         lda #$00
+00:CCE1 85FB            	   507:         sta bankl
+00:CCE3 85FD            	   508:         sta bankh
+00:CCE5 85AE            	   509:         sta $ae
+00:CCE7 85B0            	   510:         sta $b0
+                        	   511: catloop:
+00:CCE9 A000            	   512:         ldy #$00 
+00:CCEB 2081CF          	   513:         jsr get_byte 
+00:CCEE 85A7            	   514:         sta temp1
+00:CCF0 2021CB          	   515:         jsr next_byte 
+00:CCF3 2081CF          	   516:         jsr get_byte 
+00:CCF6 85A8            	   517:         sta temp2
+00:CCF8 2021CB          	   518:         jsr next_byte 
+00:CCFB 2081CF          	   519:         jsr get_byte 
+00:CCFE 85A9            	   520:         sta temp3
+00:CD00 A5A7            	   521:         lda temp1
+00:CD02 D00B            	   522:         bne not_0_3
+00:CD04 A5A8            	   523:         lda temp2
+00:CD06 D007            	   524:         bne not_0_3
+00:CD08 A5A9            	   525:         lda temp3
+00:CD0A D003            	   526:         bne not_0_3
+00:CD0C 4C8FCD          	   527:         jmp nopgm
+                        	   528: not_0_3:
+00:CD0F 38              	   529:         sec
+00:CD10 A5A7            	   530:         lda temp1
+00:CD12 E5AE            	   531:         sbc $ae
+00:CD14 8DDFCD          	   532:         sta pal
+00:CD17 A5A8            	   533:         lda temp2
+00:CD19 E5AF            	   534:         sbc $af
+00:CD1B 8DE0CD          	   535:         sta pam
+00:CD1E 20CDCF          	   536:         jsr set_bank_rom
+00:CD21 AEE0CD          	   537:         ldx pam
+00:CD24 E064            	   538:         cpx #100
+00:CD26 B005            	   539:         bcs bignum
+00:CD28 A920            	   540:         lda #$20
+00:CD2A 20D2FF          	   541:         jsr $ffd2
+00:CD2D E00A            	   542: bignum:  cpx #10
+00:CD2F B005            	   543:         bcs realbignum
+00:CD31 A920            	   544:         lda #$20
+00:CD33 20D2FF          	   545:         jsr $ffd2
+                        	   546: realbignum:     
+00:CD36 E8              	   547:         inx              ; to avoid 0-block size (still in total free!)
+00:CD37 8A              	   548:         txa
+00:CD38 20D4CF          	   549:         jsr printdec
+00:CD3B A920            	   550:         lda #$20
+00:CD3D 20D2FF          	   551:         jsr $ffd2
+00:CD40 A922            	   552:         lda #$22
+00:CD42 20D2FF          	   553:         jsr $ffd2
+00:CD45 20C6CF          	   554:         jsr set_bank_ram
+00:CD48 A5A7            	   555:         lda temp1
+00:CD4A 85AE            	   556:         sta $ae
+00:CD4C A5A8            	   557:         lda temp2
+00:CD4E 85AF            	   558:         sta $af
+00:CD50 A5A9            	   559:         lda temp3
+00:CD52 85B0            	   560:         sta $b0
+00:CD54 A000            	   561:         ldy #$00 
+00:CD56 2021CB          	   562: p_name: jsr next_byte 
+00:CD59 2081CF          	   563:         jsr get_byte 
+00:CD5C F010            	   564:         beq endnme 
+00:CD5E 48              	   565:         pha 
+00:CD5F 20CDCF          	   566:         jsr set_bank_rom
+00:CD62 58              	   567:         cli 
+00:CD63 68              	   568:         pla
+00:CD64 20D2FF          	   569:         jsr $ffd2 
+00:CD67 78              	   570:         sei 
+00:CD68 20C6CF          	   571:         jsr set_bank_ram
+00:CD6B 4C56CD          	   572:         jmp p_name 
+00:CD6E A5AE            	   573: endnme: lda $ae 
+00:CD70 85FB            	   574:         sta bankl
+00:CD72 A5AF            	   575:         lda $af 
+00:CD74 85FC            	   576:         sta bankm
+00:CD76 A5B0            	   577:         lda $b0
+00:CD78 85FD            	   578:         sta bankh
+00:CD7A 20CDCF          	   579:         jsr set_bank_rom
+00:CD7D 58              	   580:         cli
+00:CD7E A922            	   581:         lda #$22
+00:CD80 20D2FF          	   582:         jsr $ffd2
+00:CD83 A90D            	   583:         lda #$0d
+00:CD85 20D2FF          	   584:         jsr $ffd2
+00:CD88 78              	   585:         sei
+00:CD89 20C6CF          	   586:         jsr set_bank_ram
+00:CD8C 4CE9CC          	   587:         jmp catloop
+                        	   588: nopgm:  
+00:CD8F 20CDCF          	   589:         jsr set_bank_rom
+00:CD92 58              	   590:         cli
+00:CD93 A90D            	   591:         lda #$0d
+00:CD95 20D2FF          	   592:         jsr $ffd2
+00:CD98 38              	   593:         sec
+00:CD99 A9FF            	   594:         lda #$ff
+00:CD9B E5FC            	   595:         sbc bankm
+00:CD9D AA              	   596:         tax
+                        	   597: ramsize:        
+00:CD9E A91F            	   598:         lda #$1f                ;#$07 for 512KB
+00:CDA0 E5FD            	   599:         sbc bankh
+00:CDA2 20CDBD          	   600:         jsr $bdcd               ;dec-print
+00:CDA5 A200            	   601:         ldx #$00
+                        	   602: bytesfree:
+00:CDA7 BDD2CD          	   603:         lda text1,x
+00:CDAA F006            	   604:         beq dir_end
+00:CDAC 20D2FF          	   605:         jsr $ffd2
+00:CDAF E8              	   606:         inx
+00:CDB0 D0F5            	   607:         bne bytesfree 
+                        	   608: dir_end:
+00:CDB2 18              	   609:         clc
+00:CDB3 A62D            	   610:         ldx $2d
+00:CDB5 A42E            	   611:         ldy $2e
+00:CDB7 A940            	   612:         lda #$40
+00:CDB9 8590            	   613:         sta $90                 ;st
+00:CDBB 60              	   614:         rts
+00:CDBC 0D              	   615: text0:  .byte $0d,$12
+00:CDBD 12
+00:CDBE 20204E454F52414D	   616:         .text "  NEORAM-DRIVE  "
+00:CDC6 2D44524956452020
+00:CDCE 92              	   617:         .byte $92,$0d,$0d,$00
+00:CDCF 0D
+00:CDD0 0D
+00:CDD1 00
+00:CDD2 20424C4F434B5320	   618: text1:  .string " BLOCKS FREE"
+00:CDDA 46524545
+00:CDDE 00
+00:CDDF 00              	   619: pal:    .byte $00
+00:CDE0 00              	   620: pam:    .byte $00
+00:CDE1 00              	   621: pah:    .byte $00
+00:CDE2 00              	   622: pbl:    .byte $00
+00:CDE3 00              	   623: pbm:    .byte $00
+00:CDE4 00              	   624: pbh:    .byte $00
+00:CDE5 00              	   625: s_l:    .byte $00               ;src
+00:CDE6 00              	   626: s_m:    .byte $00
+00:CDE7 00              	   627: s_h:    .byte $00
+00:CDE8 00              	   628: d_l:    .byte $00               ;dst
+00:CDE9 00              	   629: d_m:    .byte $00
+00:CDEA 00              	   630: d_h:    .byte $00
+00:CDEB 00              	   631: l_l:    .byte $00               ;len
+00:CDEC 00              	   632: l_m:    .byte $00
+00:CDED 00              	   633: l_h:    .byte $00
+00:CDEE 00              	   634: es_l:   .byte $00
+00:CDEF 00              	   635: es_m:   .byte $00
+00:CDF0 00              	   636: es_h:   .byte $00
+                        	   637: scratch:
+00:CDF1 78              	   638:         sei 
+00:CDF2 20C6CF          	   639:         jsr set_bank_ram
+00:CDF5 C6B7            	   640:         dec $b7
+00:CDF7 E6BB            	   641:         inc $bb
+00:CDF9 D002            	   642:         bne np
+00:CDFB E6BC            	   643:         inc $bc
+00:CDFD 201CCC          	   644: np:     jsr search
+00:CE00 2033CB          	   645:         jsr seek_end
+00:CE03 2021CB          	   646:         jsr next_byte
+00:CE06 2021CB          	   647:         jsr next_byte
+00:CE09 2021CB          	   648:         jsr next_byte
+00:CE0C 2021CB          	   649:         jsr next_byte
+                        	   650: 
+00:CE0F A5FB            	   651:         lda bankl
+00:CE11 8DEECD          	   652:         sta es_l
+00:CE14 A5FC            	   653:         lda bankm
+00:CE16 8DEFCD          	   654:         sta es_m
+00:CE19 A5FD            	   655:         lda bankh
+00:CE1B 8DF0CD          	   656:         sta es_h
+                        	   657: 
+00:CE1E 38              	   658:         sec 
+00:CE1F A5AE            	   659:         lda $ae
+00:CE21 8DE5CD          	   660:         sta s_l
+00:CE24 E5C1            	   661:         sbc $c1
+00:CE26 8DEBCD          	   662:         sta l_l
+00:CE29 A5AF            	   663:         lda $af
+00:CE2B 8DE6CD          	   664:         sta s_m
+00:CE2E E5C2            	   665:         sbc $c2
+00:CE30 8DECCD          	   666:         sta l_m
+00:CE33 A5B0            	   667:         lda $b0
+00:CE35 8DE7CD          	   668:         sta s_h
+00:CE38 E5AA            	   669:         sbc temp_c3
+00:CE3A 8DEDCD          	   670:         sta l_h
+                        	   671: nichtab:
+00:CE3D A5C1            	   672:         lda $c1
+00:CE3F 8DE8CD          	   673:         sta d_l
+00:CE42 A5C2            	   674:         lda $c2 
+00:CE44 8DE9CD          	   675:         sta d_m 
+00:CE47 A5AA            	   676:         lda temp_c3
+00:CE49 8DEACD          	   677:         sta d_h
+                        	   678: move_new:
+00:CE4C ADE5CD          	   679:         lda s_l
+00:CE4F 85FB            	   680:         sta bankl
+00:CE51 ADE6CD          	   681:         lda s_m
+00:CE54 85FC            	   682:         sta bankm
+00:CE56 ADE7CD          	   683:         lda s_h
+00:CE59 85FD            	   684:         sta bankh
+00:CE5B 2081CF          	   685:         jsr get_byte 
+00:CE5E 48              	   686:         pha
+00:CE5F 2021CB          	   687:         jsr next_byte
+00:CE62 A5FB            	   688:         lda bankl
+00:CE64 8DE5CD          	   689:         sta s_l
+00:CE67 A5FC            	   690:         lda bankm
+00:CE69 8DE6CD          	   691:         sta s_m
+00:CE6C A5FD            	   692:         lda bankh
+00:CE6E 8DE7CD          	   693:         sta s_h
+00:CE71 ADE8CD          	   694:         lda d_l 
+00:CE74 85FB            	   695:         sta bankl
+00:CE76 ADE9CD          	   696:         lda d_m
+00:CE79 85FC            	   697:         sta bankm
+00:CE7B ADEACD          	   698:         lda d_h
+00:CE7E 85FD            	   699:         sta bankh
+00:CE80 68              	   700:         pla
+00:CE81 209BCF          	   701:         jsr save_byte 
+00:CE84 2021CB          	   702:         jsr next_byte
+00:CE87 A5FB            	   703:         lda bankl
+00:CE89 8DE8CD          	   704:         sta d_l
+00:CE8C A5FC            	   705:         lda bankm
+00:CE8E 8DE9CD          	   706:         sta d_m
+00:CE91 A5FD            	   707:         lda bankh
+00:CE93 8DEACD          	   708:         sta d_h
+00:CE96 ADE5CD          	   709:         lda s_l
+00:CE99 CDEECD          	   710:         cmp es_l
+00:CE9C D0AE            	   711:         bne move_new
+00:CE9E ADE6CD          	   712:         lda s_m
+00:CEA1 CDEFCD          	   713:         cmp es_m
+00:CEA4 D0A6            	   714:         bne move_new
+00:CEA6 ADE6CD          	   715:         lda s_m
+00:CEA9 CDEFCD          	   716:         cmp es_m
+00:CEAC D09E            	   717:         bne move_new
+                        	   718: korrloop:
+00:CEAE A000            	   719:         ldy #$00 
+00:CEB0 A5C1            	   720:         lda $c1
+00:CEB2 85FB            	   721:         sta bankl
+00:CEB4 A5C2            	   722:         lda $c2
+00:CEB6 85FC            	   723:         sta bankm
+00:CEB8 A5AA            	   724:         lda temp_c3
+00:CEBA 85FD            	   725:         sta bankh
+00:CEBC 2081CF          	   726: korr2:  jsr get_byte 
+00:CEBF 8DDFCD          	   727:         sta pal
+00:CEC2 38              	   728:         sec
+00:CEC3 EDEBCD          	   729:         sbc l_l 
+00:CEC6 8DE2CD          	   730:         sta pbl
+00:CEC9 08              	   731:         php
+00:CECA 209BCF          	   732:         jsr save_byte 
+00:CECD 2021CB          	   733:         jsr next_byte 
+00:CED0 2081CF          	   734:         jsr get_byte 
+00:CED3 8DE0CD          	   735:         sta pam
+00:CED6 28              	   736:         plp 
+00:CED7 EDECCD          	   737:         sbc l_m
+00:CEDA 8DE3CD          	   738:         sta pbm
+00:CEDD 08              	   739:         php
+00:CEDE 209BCF          	   740:         jsr save_byte 
+00:CEE1 2021CB          	   741:         jsr next_byte 
+00:CEE4 2081CF          	   742:         jsr get_byte 
+00:CEE7 8DE1CD          	   743:         sta pah
+00:CEEA 28              	   744:         plp 
+00:CEEB EDEDCD          	   745:         sbc l_h
+00:CEEE 8DE4CD          	   746:         sta pbh
+00:CEF1 209BCF          	   747:         jsr save_byte 
+00:CEF4 ADDFCD          	   748:         lda pal
+00:CEF7 D031            	   749:         bne not_yet_end
+00:CEF9 ADE0CD          	   750:         lda pam
+00:CEFC D02C            	   751:         bne not_yet_end
+00:CEFE ADE1CD          	   752:         lda pah
+00:CF01 D027            	   753:         bne not_yet_end
+00:CF03 A5FB            	   754:         lda bankl
+00:CF05 38              	   755:         sec 
+00:CF06 E902            	   756:         sbc #$02
+00:CF08 85FB            	   757:         sta bankl
+00:CF0A A5FC            	   758:         lda bankm
+00:CF0C E900            	   759:         sbc #$00 
+00:CF0E 85FC            	   760:         sta bankm
+00:CF10 A5FD            	   761:         lda bankh
+00:CF12 E900            	   762:         sbc #$00 
+00:CF14 85FD            	   763:         sta bankh
+00:CF16 A900            	   764:         lda #$00
+00:CF18 209BCF          	   765:         jsr save_byte
+00:CF1B 2021CB          	   766:         jsr next_byte
+00:CF1E 209BCF          	   767:         jsr save_byte
+00:CF21 2021CB          	   768:         jsr next_byte
+00:CF24 209BCF          	   769:         jsr save_byte
+00:CF27 4C3CCF          	   770:         jmp endmove_new
+                        	   771: not_yet_end:
+00:CF2A ADE2CD          	   772:         lda pbl
+00:CF2D 85FB            	   773:         sta bankl
+00:CF2F ADE3CD          	   774:         lda pbm
+00:CF32 85FC            	   775:         sta bankm
+00:CF34 ADE4CD          	   776:         lda pbh
+00:CF37 85FD            	   777:         sta bankh
+00:CF39 4CBCCE          	   778:         jmp korr2
+                        	   779: endmove_new:
+00:CF3C 18              	   780:         clc 
+00:CF3D A62D            	   781:         ldx $2d 
+00:CF3F A42E            	   782:         ldy $2e 
+00:CF41 20CDCF          	   783:         jsr set_bank_rom
+00:CF44 58              	   784:         cli 
+00:CF45 A940            	   785:         lda #$40 
+00:CF47 8590            	   786:         sta $90 
+00:CF49 60              	   787:         rts 
+00:CF4A 78              	   788: format: sei
+00:CF4B EE20D0          	   789:         inc $d020
+00:CF4E 20C6CF          	   790:         jsr set_bank_ram
+                        	   791: startpage3:
+00:CF51 A907            	   792:         lda #$07
+00:CF53 85FC            	   793:         sta bankm
+00:CF55 A900            	   794:         lda #$00
+00:CF57 85FB            	   795:         sta bankl
+00:CF59 85FD            	   796:         sta bankh
+00:CF5B 209BCF          	   797:         jsr save_byte
+00:CF5E 2021CB          	   798:         jsr next_byte
+00:CF61 209BCF          	   799:         jsr save_byte
+00:CF64 2021CB          	   800:         jsr next_byte
+00:CF67 209BCF          	   801:         jsr save_byte
+00:CF6A 2021CB          	   802:         jsr next_byte
+00:CF6D 209BCF          	   803:         jsr save_byte
+00:CF70 2021CB          	   804:         jsr next_byte
+00:CF73 85FB            	   805:         sta bankl
+00:CF75 85FC            	   806:         sta bankm
+00:CF77 85FD            	   807:         sta bankh
+00:CF79 20CDCF          	   808:         jsr set_bank_rom
+00:CF7C CE20D0          	   809:         dec $d020
+00:CF7F 58              	   810:         cli
+00:CF80 60              	   811:         rts
+                        	   812: get_byte:
+00:CF81 A5FC            	   813:         lda bankm
+00:CF83 85FE            	   814:         sta temp
+00:CF85 293F            	   815:         and #%00111111
+00:CF87 8DFEDF          	   816:         sta $dffe
+00:CF8A A5FD            	   817:         lda bankh
+00:CF8C 06FE            	   818:         asl temp
+00:CF8E 2A              	   819:         rol
+00:CF8F 06FE            	   820:         asl temp
+00:CF91 2A              	   821:         rol
+00:CF92 8DFFDF          	   822:         sta $dfff
+00:CF95 A6FB            	   823:         ldx bankl
+00:CF97 BD00DE          	   824:         lda $de00,x
+00:CF9A 60              	   825: get_x:  rts
+                        	   826: save_byte:
+00:CF9B 8EC0CF          	   827:         stx save_x+1
+00:CF9E 8CC2CF          	   828:         sty save_y+1
+00:CFA1 8DC4CF          	   829:         sta save_a+1
+00:CFA4 A8              	   830:         tay
+00:CFA5 A5FC            	   831:         lda bankm
+00:CFA7 85FE            	   832:         sta temp
+00:CFA9 293F            	   833:         and #%00111111
+00:CFAB 8DFEDF          	   834:         sta $dffe
+00:CFAE A5FD            	   835:         lda bankh
+00:CFB0 06FE            	   836:         asl temp
+00:CFB2 2A              	   837:         rol
+00:CFB3 06FE            	   838:         asl temp
+00:CFB5 2A              	   839:         rol
+00:CFB6 8DFFDF          	   840:         sta $dfff
+00:CFB9 A6FB            	   841:         ldx bankl
+00:CFBB 98              	   842:         tya
+00:CFBC 9D00DE          	   843:         sta $de00,x
+00:CFBF A200            	   844: save_x: ldx #$00
+00:CFC1 A000            	   845: save_y: ldy #$00
+00:CFC3 A900            	   846: save_a: lda #$00
+00:CFC5 60              	   847:         rts
+                        	   848: set_bank_ram:
+00:CFC6 A501            	   849:         lda $01 
+00:CFC8 29FD            	   850:         and #%11111101
+00:CFCA 8501            	   851:         sta $01 
+00:CFCC 60              	   852:         rts
+                        	   853: set_bank_rom:
+00:CFCD A501            	   854:         lda $01 
+00:CFCF 0903            	   855:         ora #$03
+00:CFD1 8501            	   856:         sta $01 
+00:CFD3 60              	   857:         rts
+                        	   858: printdec:
+00:CFD4 A200            	   859:         ldx #0 
+00:CFD6 20ECCF          	   860: pdloop: jsr div10
+00:CFD9 48              	   861:         pha 
+00:CFDA E8              	   862:         inx 
+00:CFDB C000            	   863:         cpy #0 
+00:CFDD F004            	   864:         beq pdloop2 
+00:CFDF 98              	   865:         tya 
+00:CFE0 4CD6CF          	   866:         jmp pdloop 
+                        	   867: pdloop2:
+00:CFE3 68              	   868:         pla 
+00:CFE4 0930            	   869:         ora #$30
+00:CFE6 20D2FF          	   870:         jsr $ffd2 
+00:CFE9 CA              	   871:         dex 
+00:CFEA D0F7            	   872:         bne pdloop2 
+00:CFEC 38              	   873: div10:  sec 
+00:CFED A0FF            	   874:         ldy #$ff 
+00:CFEF C8              	   875: divlp:  iny 
+00:CFF0 E90A            	   876:         sbc #10 
+00:CFF2 B0FB            	   877:         bcs divlp 
+00:CFF4 690A            	   878:         adc #10 
+00:CFF6 60              	   879:         rts
+                        	   880:         .rend
+                        	   881: 
+
+
+Symbols by name:
+absload                          A:CBCA
+ast                              A:CCBD
+bankh                            E:00FD
+bankl                            E:00FB
+bankm                            E:00FC
+bas_0                            A:0812
+bas_1                            A:0815
+bas_2                            A:0823
+bas_3                            A:0826
+bas_4                            A:082B
+bas_5                            A:0839
+bas_end                          A:0849
+bas_end1                         A:0853
+bas_end2                         A:085E
+basend                           A:080B
+bignum                           A:CD2D
+bytesfree                        A:CDA7
+cat2                             A:CCCD
+catloop                          A:CCE9
+d_h                              A:CDEA
+d_l                              A:CDE8
+d_m                              A:CDE9
+dir_end                          A:CDB2
+directory                        A:CCCA
+div10                            A:CFEC
+divlp                            A:CFEF
+end_of_first_launcher            A:DE19
+endfound                         A:CB72
+endload                          A:CC0E
+endmove_new                      A:CF3C
+endname                          A:CAA8
+endnme                           A:CD6E
+endsave                          A:CADC
+es_h                             A:CDF0
+es_l                             A:CDEE
+es_m                             A:CDEF
+findloop                         A:CB3D
+format                           A:CF4A
+found                            A:CC97
+foundnull                        A:CC9F
+get_byte                         A:CF81
+get_x                            A:CF9A
+ini_txt                          A:085F
+init_0                           A:C902
+init_1                           A:C907
+init_2                           A:C90A
+init_3                           A:C913
+init_4                           A:C91B
+joker                            A:CC86
+jumptable                        A:0957
+korr2                            A:CEBC
+korrloop                         A:CEAE
+l_h                              A:CDED
+l_l                              A:CDEB
+l_m                              A:CDEC
+launch_code                      A:08AF
+launch_code_over                 A:08C8
+load                             A:CA70
+load1                            A:CBEC
+load_prg                         A:CB87
+loadloop                         A:CBDA
+move_new                         A:CE4C
+name                             A:CA8D
+nameloop                         A:CC6A
+nameloop1                        A:CC26
+next                             A:CCAE
+next_byte                        A:CB21
+next_byte2                       A:CB2C
+nichtab                          A:CE3D
+noend                            A:CACE
+nopage                           A:CB32
+nopgm                            A:CD8F
+not_0                            A:CB63
+not_0_2                          A:CC5B
+not_0_3                          A:CD0F
+not_yet_end                      A:CF2A
+notfound                         A:CCA5
+np                               A:CDFD
+okload                           A:CB92
+p_name                           A:CD56
+pah                              A:CDE1
+pal                              A:CDDF
+pam                              A:CDE0
+pbh                              A:CDE4
+pbl                              A:CDE2
+pbm                              A:CDE3
+pdloop                           A:CFD6
+pdloop2                          A:CFE3
+print                            A:CA37
+print_end                        A:CA42
+printdec                         A:CFD4
+ramsave                          A:CA7B
+ramsize                          A:CD9E
+realbignum                       A:CD36
+s_h                              A:CDE7
+s_l                              A:CDE5
+s_m                              A:CDE6
+save                             A:CA6E
+save_a                           A:CFC3
+save_byte                        A:CF9B
+save_prg                         A:CA72
+save_x                           A:CFBF
+save_y                           A:CFC1
+saveloop                         A:CAC2
+scratch                          A:CDF1
+search                           A:CC1C
+second_launch                    A:C900
+seek_0                           A:CCBF
+seek_end                         A:CB33
+set_bank_ram                     A:CFC6
+set_bank_rom                     A:CFCD
+set_end                          A:CB2B
+sol_1                            A:DE02
+sol_2                            A:DE05
+sol_end                          A:DE11
+spr0                             A:CBA0
+spr1                             A:CBA7
+spr2                             A:CBAE
+start_of_code                    A:CA00
+start_of_data                    A:09AF
+start_of_launcher                A:DE00
+startpage0                       A:CB33
+startpage1                       A:CC1C
+startpage2                       A:CCD9
+startpage3                       A:CF51
+sys_starter                      A:0957
+temp                             E:00FE
+temp1                            E:00A7
+temp2                            E:00A8
+temp3                            E:00A9
+temp_c3                          E:00AA
+temp_cmp                         E:00AB
+text0                            A:CDBC
+text1                            A:CDD2
+text2                            A:CA43
+verify                           A:CBFE
+verifyed                         A:CBF5
+
+Symbols by value:
+00A7 temp1
+00A8 temp2
+00A9 temp3
+00AA temp_c3
+00AB temp_cmp
+00FB bankl
+00FC bankm
+00FD bankh
+00FE temp
+080B basend
+0812 bas_0
+0815 bas_1
+0823 bas_2
+0826 bas_3
+082B bas_4
+0839 bas_5
+0849 bas_end
+0853 bas_end1
+085E bas_end2
+085F ini_txt
+08AF launch_code
+08C8 launch_code_over
+0957 jumptable
+0957 sys_starter
+09AF start_of_data
+C900 second_launch
+C902 init_0
+C907 init_1
+C90A init_2
+C913 init_3
+C91B init_4
+CA00 start_of_code
+CA37 print
+CA42 print_end
+CA43 text2
+CA6E save
+CA70 load
+CA72 save_prg
+CA7B ramsave
+CA8D name
+CAA8 endname
+CAC2 saveloop
+CACE noend
+CADC endsave
+CB21 next_byte
+CB2B set_end
+CB2C next_byte2
+CB32 nopage
+CB33 seek_end
+CB33 startpage0
+CB3D findloop
+CB63 not_0
+CB72 endfound
+CB87 load_prg
+CB92 okload
+CBA0 spr0
+CBA7 spr1
+CBAE spr2
+CBCA absload
+CBDA loadloop
+CBEC load1
+CBF5 verifyed
+CBFE verify
+CC0E endload
+CC1C search
+CC1C startpage1
+CC26 nameloop1
+CC5B not_0_2
+CC6A nameloop
+CC86 joker
+CC97 found
+CC9F foundnull
+CCA5 notfound
+CCAE next
+CCBD ast
+CCBF seek_0
+CCCA directory
+CCCD cat2
+CCD9 startpage2
+CCE9 catloop
+CD0F not_0_3
+CD2D bignum
+CD36 realbignum
+CD56 p_name
+CD6E endnme
+CD8F nopgm
+CD9E ramsize
+CDA7 bytesfree
+CDB2 dir_end
+CDBC text0
+CDD2 text1
+CDDF pal
+CDE0 pam
+CDE1 pah
+CDE2 pbl
+CDE3 pbm
+CDE4 pbh
+CDE5 s_l
+CDE6 s_m
+CDE7 s_h
+CDE8 d_l
+CDE9 d_m
+CDEA d_h
+CDEB l_l
+CDEC l_m
+CDED l_h
+CDEE es_l
+CDEF es_m
+CDF0 es_h
+CDF1 scratch
+CDFD np
+CE3D nichtab
+CE4C move_new
+CEAE korrloop
+CEBC korr2
+CF2A not_yet_end
+CF3C endmove_new
+CF4A format
+CF51 startpage3
+CF81 get_byte
+CF9A get_x
+CF9B save_byte
+CFBF save_x
+CFC1 save_y
+CFC3 save_a
+CFC6 set_bank_ram
+CFCD set_bank_rom
+CFD4 printdec
+CFD6 pdloop
+CFE3 pdloop2
+CFEC div10
+CFEF divlp
+DE00 start_of_launcher
+DE02 sol_1
+DE05 sol_2
+DE11 sol_end
+DE19 end_of_first_launcher
